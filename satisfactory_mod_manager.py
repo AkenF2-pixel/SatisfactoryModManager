@@ -118,8 +118,8 @@ def http_get(url):
 
 
 Q_SEARCH = """
-query($search:String!,$offset:Int!){
-  getMods(filter:{search:$search,limit:30,offset:$offset,order_by:__ORDER__,order:desc}){
+query($offset:Int!__SVAR__){
+  getMods(filter:{__SF__limit:30,offset:$offset,order_by:__ORDER__,order:desc}){
     count
     mods{ id name mod_reference short_description downloads __VERS__ }
   }
@@ -594,8 +594,11 @@ class App(ExtrasMixin, SaveTabsMixin, tk.Tk):
             for vers in (VERS_FRAGMENT, ""):  # second pass: plain list if the version info is refused
                 for o in orders:
                     try:
-                        return gql(Q_SEARCH.replace("__ORDER__", o).replace("__VERS__", vers),
-                                   {"search": term, "offset": off})["getMods"]
+                        # the API rejects an empty search string, so leave the field out entirely when nothing is typed
+                        q = Q_SEARCH.replace("__ORDER__", o).replace("__VERS__", vers)
+                        q = q.replace("__SVAR__", ",$search:String!" if term else "").replace("__SF__", "search:$search," if term else "")
+                        variables = {"offset": off, **({"search": term} if term else {})}
+                        return gql(q, variables)["getMods"]
                     except RuntimeError as e:
                         last = e
             raise last
