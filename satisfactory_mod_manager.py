@@ -12,6 +12,7 @@ Build: pip install pyinstaller
        pyinstaller --onefile --windowed --name SatisfactoryModManager satisfactory_mod_manager.py
 """
 import io
+from html import unescape
 import json
 import os
 import shutil
@@ -165,8 +166,21 @@ def gql_ref(query, ref):
         return gql(query.replace("String!", "ModReference!"), {"ref": ref})
 
 
+def clean_html(md):
+    """Mod pages mix markdown with raw HTML/CSS: drop <style>/<script> blocks and comments, turn block tags
+    into line breaks, strip the remaining tags and decode entities."""
+    md = re.sub(r"(?is)<(style|script)\b.*?</\1\s*>", "", md)
+    md = re.sub(r"(?s)<!--.*?-->", "", md)
+    md = re.sub(r"(?is)<h([1-6])\b[^>]*>(.*?)</h\1\s*>", lambda m: "\n" + "#" * int(m.group(1)) + " " + m.group(2) + "\n", md)
+    md = re.sub(r"(?i)<li\b[^>]*>", "\n- ", md)
+    md = re.sub(r"(?i)<br\s*/?>|</(?:p|div|tr|ul|ol|table|section)\s*>", "\n", md)
+    md = re.sub(r"</?[A-Za-z][^>]*>", "", md)
+    return re.sub(r"\n{3,}", "\n\n", unescape(md)).strip()
+
+
 def markdown_segments(md):
     """Very small markdown -> (text, tag) pieces for the Text widget."""
+    md = clean_html(md)
     out, in_code = [], False
     for raw in md.replace("\r", "").split("\n"):
         line = raw.rstrip()
