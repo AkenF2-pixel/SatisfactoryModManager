@@ -78,8 +78,8 @@ class SaveTabsMixin:
         ttk.Label(ed, text="Item (only items already in this save):", wraplength=240).pack(anchor="w")
         self.ed_item = ttk.Combobox(ed, width=32)
         self.ed_item.pack(anchor="w", pady=(0, 6))
-        ttk.Label(ed, text="Amount (0-9999):").pack(anchor="w")
-        self.ed_amount = ttk.Spinbox(ed, from_=0, to=9999, width=10)
+        ttk.Label(ed, text="Amount (0-999999):").pack(anchor="w")
+        self.ed_amount = ttk.Spinbox(ed, from_=0, to=999999, width=10)
         self.ed_amount.pack(anchor="w", pady=(0, 6))
         ttk.Button(ed, text="Set slot", command=self.sv_set_slot).pack(fill="x")
         ttk.Button(ed, text="Revert slot", command=self.sv_revert_slot).pack(fill="x", pady=4)
@@ -136,9 +136,12 @@ class SaveTabsMixin:
             self.set_status("Reading objects...")
             try:
                 ctx["levels"] = satsave.parse_save(body, info.get("save_version", 0))
-                ctx["invs"] = satsave.player_inventories(body, ctx["levels"])
+                errs = []
+                ctx["invs"] = satsave.player_inventories(body, ctx["levels"], errs)
                 if not ctx["invs"]:
-                    ctx["err"] = "No player inventory found in this save."
+                    ctx["err"] = "No player inventory found in this save. " + "; ".join(errs[:2])
+                elif errs:
+                    ctx["err"] = "Some inventories could not be read: " + "; ".join(errs[:2])
             except satsave.SaveError as e:
                 ctx["err"] = f"Inventory editing is not available for this save: {e}"
             self.set_status("Scanning map data...")
@@ -189,7 +192,7 @@ class SaveTabsMixin:
             path, num = self.sv_pending.get((ii, s), (st["item"], st["num"]))
             edited = (ii, s) in self.sv_pending
             self.inv_tree.insert("", "end", iid=str(s), tags=("edited",) if edited else (),
-                                 values=(s + 1, self._item_text(path), num, "edited" if edited else ("" if st["item_ok"] else "item locked")))
+                                 values=(s + 1, self._item_text(path), num, "edited" if edited else ("unsupported slot" if "val_off" not in st else ("" if st["item_ok"] else "item locked"))))
 
     def sv_load_editor(self):
         sel, ii = self.inv_tree.selection(), self._inv_index()
@@ -214,8 +217,11 @@ class SaveTabsMixin:
         except ValueError:
             messagebox.showerror("Amount", "Amount must be a whole number.")
             return
-        if not 0 <= num <= 9999:
-            messagebox.showerror("Amount", "Amount must be between 0 and 9999.")
+        if not 0 <= num <= 999999:
+            messagebox.showerror("Amount", "Amount must be between 0 and 999999.")
+            return
+        if "val_off" not in st:
+            messagebox.showerror("Slot", "This slot uses a layout the editor doesn't understand (probably a modded slot type), so it can't be edited.")
             return
         text = self.ed_item.get().strip()
         if st["item_ok"]:

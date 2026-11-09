@@ -334,20 +334,26 @@ def _read_inventory(body, data_off, size, ue5):
     return None
 
 
-def player_inventories(body, levels):
-    """All inventory components that belong to a player character, with their stacks."""
+def player_inventories(body, levels, errors=None):
+    """
+    Every component owned by a player character that holds `mInventoryStacks` - any component class, so
+    modded inventories (bigger backpacks, extra slot sets) are found too. Slot count is whatever the
+    save holds. Unreadable ones are skipped; their reasons are appended to `errors` if given.
+    """
     found = []
     for lvl in levels:
         for i, (actor, typ, name, parent, _pos) in enumerate(lvl.headers):
-            if actor or not typ.endswith("FGInventoryComponent") or not parent or "Char_Player_C_" not in parent:
+            if actor or not parent or "Char_Player" not in parent:
                 continue
             len_off, data_off, size, ue5 = lvl.objs[i]
             try:
                 inv = _read_inventory(body, data_off, size, ue5)
-            except SaveError:
+            except SaveError as e:
+                if errors is not None and "Inventory" in typ + name:
+                    errors.append(f"{name.rsplit('.', 1)[-1]}: {e}")
                 inv = None
             if inv:
-                inv.update(label=f"{parent.rsplit('.', 1)[-1]} / {name.rsplit('.', 1)[-1]}",
+                inv.update(label=f"{parent.rsplit('.', 1)[-1]} / {name.rsplit('.', 1)[-1]} ({len(inv['stacks'])} slots)",
                            data_len_off=len_off, blob_len_off=lvl.blob_len_off)
                 found.append(inv)
     return found
@@ -810,8 +816,10 @@ def _selftest():
                 [empty_actor, node_data(ore, "Pure", True), node_data("", "Impure", False), node_data("", "Normal", False)])
     per = blobs([actor("/Game/FactoryGame/Character/Player/Char_Player.Char_Player_C", pl, (500, -500, 10)),
                  comp("/Script/FactoryGame.FGInventoryComponent", pl + ".inventory", pl),
-                 comp("/Script/FactoryGame.FGInventoryComponent", "Persistent_Level:PersistentLevel.Storage_C_1.inv", "Persistent_Level:PersistentLevel.Storage_C_1")],
-                [empty_actor, inventory([(iron, 40), ("", 0), (cable, 7)]), inventory([(iron, 999)])])
+                 comp("/Script/FactoryGame.FGInventoryComponent", "Persistent_Level:PersistentLevel.Storage_C_1.inv", "Persistent_Level:PersistentLevel.Storage_C_1"),
+                 comp("/Script/BigPack.BigInventoryComponent", pl + ".BigPack", pl)],
+                [empty_actor, inventory([(iron, 40), ("", 0), (cable, 7)]), inventory([(iron, 999)]),
+                 inventory([(iron, 5) if k % 3 == 0 else ("", 0) for k in range(120)])])
     vdata = struct.pack("<III", 1, 522, 1012) + struct.pack("<IHHHI", 0, 5, 6, 1, 123) + P("++UE5+Release") + struct.pack("<I", 0)
     rest = (vdata + struct.pack("<I", 1) + P("MainGrid") + struct.pack("<III", 100, 0, 0)
             + struct.pack("<I", 1) + P("Level_x") + sub + struct.pack("<III", 60, 0, 0)
@@ -827,11 +835,15 @@ def _selftest():
     assert h_len == len(head) and t2 == tmpl and body2 == body
     levels = parse_save(body2, 60)
     invs = player_inventories(body2, levels)
-    assert len(invs) == 1 and [s["num"] for s in invs[0]["stacks"]] == [40, 0, 7], invs
+    assert len(invs) == 2 and [s["num"] for s in invs[0]["stacks"]] == [40, 0, 7], invs
+    assert len(invs[1]["stacks"]) == 120 and invs[1]["label"].endswith("BigPack (120 slots)"), invs[1]["label"]
     assert item_paths(body2).get("Desc_IronPlate_C") == iron and item_paths(body2).get("Desc_Cable_C") == cable
 
-    new = apply_edits(body2, levels, [(0, 0, None, 123), (0, 1, cable, 5), (0, 2, "", 0)], 60)
+    new = apply_edits(body2, levels, [(0, 0, None, 123), (0, 1, cable, 5), (0, 2, "", 0), (1, 100, None, 77), (1, 119, cable, 3), (1, 3, "", 0)], 60)
     lv3 = parse_save(new, 60)
+    big = player_inventories(new, lv3)[1]["stacks"]
+    assert (big[100]["num"], big[119]["item"], big[119]["num"], big[3]["item"], big[3]["num"]) == (77, cable, 3, "", 0)
+    assert big[0]["item"] == iron and big[0]["num"] == 5 and big[1]["item"] == ""
     st = player_inventories(new, lv3)[0]["stacks"]
     assert [(s["item"], s["num"]) for s in st] == [(iron, 123), (cable, 5), ("", 0)], [(s["item"], s["num"]) for s in st]
     so_old, so_new = levels[-1].objs[2], lv3[-1].objs[2]  # storage-box inventory untouched
